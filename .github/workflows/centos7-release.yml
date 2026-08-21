@@ -1,0 +1,121 @@
+name: CentOS 7 Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: centos7-release
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build and publish Linux x64 for CentOS 7
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      ARTIFACTS_DIR: out/idea-ce/artifacts
+
+    steps:
+      - name: Require the synchronized master branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/master" ]]; then
+            echo "Run this release workflow from master after using Sync fork." >&2
+            exit 1
+          fi
+
+      - name: Checkout sources
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Calculate build number
+        id: versioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$(tr -d '[:space:]' < build.txt)"
+          if [[ ! "${snapshot}" =~ ^[0-9]+(\.[0-9]+)*\.SNAPSHOT$ ]]; then
+            echo "Unexpected build.txt value: ${snapshot}" >&2
+            exit 1
+          fi
+
+          base="${snapshot%.SNAPSHOT}"
+          build_number="${base}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+
+          echo "source_snapshot=${snapshot}" >> "${GITHUB_OUTPUT}"
+          echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
+          echo "Build number: ${build_number}"
+
+      - name: Build upstream Linux x64 distribution
+        uses: ./.github/actions/build_ide
+        with:
+          product: intellij_idea
+          swap_size: 30G
+          system_properties: >-
+            -Dbuild.number=${{ steps.versioning.outputs.build_number }}
+            -Dintellij.build.target.os=linux
+            -Dintellij.build.target.arch=x64
+
+      - name: Reclaim Docker build space
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image rm intellij_idea >/dev/null 2>&1 || true
+          docker builder prune --all --force >/dev/null 2>&1 || true
+          df -h
+
+      - name: Install ABI inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends binutils
+
+      - name: Package and verify the CentOS 7 release
+        id: package
+        shell: bash
+        run: |
+          bash .github/scripts/package-and-verify-centos7.sh \
+            "${ARTIFACTS_DIR}" \
+            "${{ steps.versioning.outputs.build_number }}" \
+            "${{ steps.versioning.outputs.source_snapshot }}"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+          RELEASE_ARTIFACT: ${{ steps.package.outputs.artifact }}
+          RELEASE_CHECKSUM: ${{ steps.package.outputs.checksum }}
+          RELEASE_NOTES: ${{ steps.package.outputs.notes }}
+          IS_PRERELEASE: ${{ steps.package.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists." >&2
+            exit 1
+          fi
+
+          flags=(
+            --repo "${GITHUB_REPOSITORY}"
+            --target "${GITHUB_SHA}"
+            --title "${RELEASE_TAG}"
+            --notes-file "${RELEASE_NOTES}"
+          )
+          if [[ "${IS_PRERELEASE}" == "true" ]]; then
+            flags+=(--prerelease)
+          else
+            flags+=(--latest)
+          fi
+
+          gh release create \
+            "${RELEASE_TAG}" \
+            "${RELEASE_ARTIFACT}" \
+            "${RELEASE_CHECKSUM}" \
+            "${flags[@]}"
