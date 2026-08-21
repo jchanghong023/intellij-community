@@ -1,0 +1,83 @@
+name: CentOS 7 Verify
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: centos7-verify-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    name: Build and verify Linux x64 for CentOS 7
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      ARTIFACTS_DIR: out/idea-ce/artifacts
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Calculate build number
+        id: versioning
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$(tr -d '[:space:]' < build.txt)"
+          if [[ ! "${snapshot}" =~ ^[0-9]+(\.[0-9]+)*\.SNAPSHOT$ ]]; then
+            echo "Unexpected build.txt value: ${snapshot}" >&2
+            exit 1
+          fi
+
+          base="${snapshot%.SNAPSHOT}"
+          build_number="${base}.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+
+          echo "source_snapshot=${snapshot}" >> "${GITHUB_OUTPUT}"
+          echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
+          echo "Build number: ${build_number}"
+
+      - name: Build upstream Linux x64 distribution
+        uses: ./.github/actions/build_ide
+        with:
+          product: intellij_idea
+          swap_size: 30G
+          android_ref: master
+          system_properties: >-
+            -Dbuild.number=${{ steps.versioning.outputs.build_number }}
+            -Dintellij.build.target.os=linux
+            -Dintellij.build.target.arch=x64
+
+      - name: Reclaim Docker build space
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image rm intellij_idea >/dev/null 2>&1 || true
+          docker builder prune --all --force >/dev/null 2>&1 || true
+          df -h
+
+      - name: Install ABI inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends binutils
+
+      - name: Package and verify CentOS 7 compatibility
+        shell: bash
+        run: |
+          bash .github/scripts/package-and-verify-centos7.sh \
+            "${ARTIFACTS_DIR}" \
+            "${{ steps.versioning.outputs.build_number }}" \
+            "${{ steps.versioning.outputs.source_snapshot }}"
+
+      - name: Verification summary
+        if: success()
+        shell: bash
+        run: |
+          echo "CentOS 7 verification passed for ${GITHUB_SHA}."
