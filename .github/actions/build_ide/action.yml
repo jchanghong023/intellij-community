@@ -10,6 +10,10 @@ inputs:
     default: '30G'
     description: 'swap file size (e.g. 16G, 30G)'
     required: false
+  android_ref:
+    default: ''
+    description: 'optional JetBrains/android ref; defaults to the triggering ref'
+    required: false
 runs:
   using: composite
   steps:
@@ -64,7 +68,7 @@ runs:
       with:
         repository: JetBrains/android
         path: android
-        ref: ${{github.ref}}
+        ref: ${{ inputs.android_ref || github.ref }}
     - name: Build environment
       shell: bash
       # language=bash
