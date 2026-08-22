@@ -625,8 +625,10 @@ release_artifact="${artifacts_dir}/pycharm-centos7-${RELEASE_TAG}-linux-x64.tar.
 release_checksum="${release_artifact}.sha256"
 rm -f "${release_artifact}" "${release_checksum}"
 
-# The upstream checksum, SBOM, product-info sibling, and integrity manifest refer
-# to the original JetBrains Runtime. They are not published after runtime replacement.
+# Original checksums, the SBOM, and the installation-integrity manifest describe
+# the unmodified upstream package and are invalid after runtime replacement.
+# The sibling product-info.json is used only to cross-check official metadata; the
+# same product-info.json remains inside the final tar because its paths are unchanged.
 rm -f \
   "${original_artifact}" \
   "${original_artifact}".sha256* \
@@ -673,7 +675,7 @@ cat > "${notes_file}" <<EOF
 
 This is an unofficial PyCharm compatibility build from the synchronized JetBrains upstream source. The official PyCharm Linux package layout and product-info metadata are validated before modification. Its bundled runtime is replaced with the newest published non-draft CentOS 7 JBR release from ${jbr_release_repository} that stays on the source tree's required runtime version line. The workflow verifies SHA256SUMS, validates the injected runtime identity/version, audits native binaries against CentOS 7 GLIBC/GLIBCXX/CXXABI limits, and runs both Java and the PyCharm launcher inside a CentOS 7 container before publishing.
 
-The original upstream checksum, SBOM, product-info sibling, and installation-integrity manifest are not published because replacing the runtime makes runtime-sensitive metadata from the original package inaccurate.
+The original upstream checksums, SBOM, and installation-integrity manifest are not published because runtime replacement invalidates them. The upstream product-info sibling is used only to cross-check the internal metadata; the unchanged product-info.json remains inside the final tar.
 EOF
 
 {
