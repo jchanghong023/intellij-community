@@ -14,6 +14,7 @@ runner_temp="${RUNNER_TEMP:-/tmp}"
 run_id="${GITHUB_RUN_ID:-local}"
 run_attempt="${GITHUB_RUN_ATTEMPT:-1}"
 work_dir="${runner_temp}/idea-centos7-${run_id}-${run_attempt}"
+jbr_release_repository="${JBR_RELEASE_REPOSITORY:-jchanghong023/JetBrainsRuntime}"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -27,6 +28,9 @@ require_command() {
 for command_name in awk curl docker find python3 readelf sha256sum tar; do
   require_command "${command_name}"
 done
+
+[[ "${jbr_release_repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+  || fail "Invalid JBR release repository: ${jbr_release_repository}"
 
 original_artifact="${artifacts_dir}/ideaIC-${expected_build_number}.tar.gz"
 if [[ ! -f "${original_artifact}" ]]; then
@@ -142,80 +146,151 @@ if [[ ! "${runtime_build}" =~ ^([0-9]+)(\..*)?$ ]]; then
 fi
 runtime_feature="${BASH_REMATCH[1]}"
 
-temurin_api_url="https://api.adoptium.net/v3/binary/latest/${runtime_feature}/ga/linux/x64/jdk/hotspot/normal/eclipse"
-echo "Resolving Eclipse Temurin JDK ${runtime_feature} from ${temurin_api_url}"
-temurin_download_url="$(
-  curl \
-    --proto '=https' \
-    --tlsv1.2 \
-    --silent \
-    --show-error \
-    --fail \
-    --output /dev/null \
-    --write-out '%{redirect_url}' \
-    "${temurin_api_url}"
-)"
-[[ "${temurin_download_url}" == https://* ]] || fail "Adoptium API did not return an HTTPS download URL"
+jbr_releases_api_url="https://api.github.com/repos/${jbr_release_repository}/releases?per_page=20"
+jbr_releases_json="${work_dir}/jbr-releases.json"
+curl_api_args=(
+  --proto '=https'
+  --tlsv1.2
+  --silent
+  --show-error
+  --fail
+  --location
+  --retry 5
+  --retry-all-errors
+  --header 'Accept: application/vnd.github+json'
+  --header 'X-GitHub-Api-Version: 2022-11-28'
+)
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  curl_api_args+=(--header "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
 
-temurin_archive="${work_dir}/temurin-jdk.tar.gz"
-temurin_checksum_file="${work_dir}/temurin-jdk.sha256.txt"
-curl \
-  --proto '=https' \
-  --proto-redir '=https' \
-  --tlsv1.2 \
-  --fail \
-  --location \
-  --retry 5 \
-  --retry-all-errors \
-  --output "${temurin_archive}" \
-  "${temurin_download_url}"
-curl \
-  --proto '=https' \
-  --proto-redir '=https' \
-  --tlsv1.2 \
-  --fail \
-  --location \
-  --retry 5 \
-  --retry-all-errors \
-  --output "${temurin_checksum_file}" \
-  "${temurin_download_url}.sha256.txt"
+echo "Resolving latest published JBR release from ${jbr_release_repository}"
+curl "${curl_api_args[@]}" \
+  --output "${jbr_releases_json}" \
+  "${jbr_releases_api_url}"
 
-expected_temurin_sha256="$(python3 - "${temurin_checksum_file}" <<'PY'
+jbr_release_env="${work_dir}/jbr-release.env"
+python3 - "${jbr_releases_json}" "${runtime_feature}" > "${jbr_release_env}" <<'PY'
+import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
-text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="strict")
-match = re.search(r"(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", text)
-if match is None:
-    raise SystemExit("No SHA-256 checksum was found in the Temurin checksum file")
-print(match.group(0).lower())
-PY
-)"
-actual_temurin_sha256="$(sha256sum "${temurin_archive}" | awk '{print tolower($1)}')"
-[[ "${actual_temurin_sha256}" == "${expected_temurin_sha256}" ]] || fail "Temurin SHA-256 verification failed"
-echo "Eclipse Temurin SHA-256 verified: ${actual_temurin_sha256}"
+releases_path, expected_feature = sys.argv[1:]
+releases = json.loads(Path(releases_path).read_text(encoding="utf-8"))
+if not isinstance(releases, list):
+    raise SystemExit("GitHub releases API returned an unexpected response")
 
-tar --extract --gzip --file "${temurin_archive}" --directory "${work_dir}/runtime-unpacked" --no-same-owner
+release = next((item for item in releases if not item.get("draft")), None)
+if release is None:
+    raise SystemExit("No published JBR release was found")
+
+assets = release.get("assets") or []
+runtime_pattern = re.compile(
+    r"^jbr_lb-(?P<version>[0-9]+(?:\.[0-9]+)*)-linux-x64-b.+\.tar\.gz$"
+)
+runtime_matches = []
+for asset in assets:
+    name = str(asset.get("name") or "")
+    match = runtime_pattern.fullmatch(name)
+    if match:
+        runtime_matches.append((asset, match))
+
+if len(runtime_matches) != 1:
+    names = ", ".join(sorted(str(asset.get("name") or "") for asset in assets))
+    raise SystemExit(
+        "Latest published JBR release must contain exactly one "
+        f"jbr_lb Linux x64 runtime asset; found {len(runtime_matches)}. Assets: {names}"
+    )
+
+runtime_asset, runtime_match = runtime_matches[0]
+asset_version = runtime_match.group("version")
+asset_feature = asset_version.split(".", 1)[0]
+if asset_feature != expected_feature:
+    raise SystemExit(
+        f"Latest JBR release provides Java feature {asset_feature}, "
+        f"but the IntelliJ source tree expects feature {expected_feature}"
+    )
+
+checksum_assets = [asset for asset in assets if asset.get("name") == "SHA256SUMS"]
+if len(checksum_assets) != 1:
+    raise SystemExit(
+        "Latest published JBR release must contain exactly one SHA256SUMS asset"
+    )
+checksum_asset = checksum_assets[0]
+
+values = {
+    "JBR_RELEASE_TAG": str(release.get("tag_name") or ""),
+    "JBR_RELEASE_URL": str(release.get("html_url") or ""),
+    "JBR_ASSET_NAME": str(runtime_asset.get("name") or ""),
+    "JBR_ASSET_URL": str(runtime_asset.get("browser_download_url") or ""),
+    "JBR_ASSET_VERSION": asset_version,
+    "JBR_CHECKSUM_URL": str(checksum_asset.get("browser_download_url") or ""),
+}
+for key, value in values.items():
+    if not value:
+        raise SystemExit(f"GitHub release metadata is missing {key}")
+    print(f"{key}={shlex.quote(value)}")
+PY
+# shellcheck disable=SC1090
+source "${jbr_release_env}"
+
+echo "Selected JBR release: ${JBR_RELEASE_TAG} (${JBR_ASSET_NAME})"
+
+jbr_archive="${work_dir}/${JBR_ASSET_NAME}"
+jbr_checksum_file="${work_dir}/SHA256SUMS"
+curl_download_args=(
+  --proto '=https'
+  --proto-redir '=https'
+  --tlsv1.2
+  --fail
+  --location
+  --retry 5
+  --retry-all-errors
+)
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  curl_download_args+=(--header "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+
+curl "${curl_download_args[@]}" --output "${jbr_archive}" "${JBR_ASSET_URL}"
+curl "${curl_download_args[@]}" --output "${jbr_checksum_file}" "${JBR_CHECKSUM_URL}"
+
+expected_jbr_sha256="$(
+  awk -v name="${JBR_ASSET_NAME}" \
+    '$2 == name || $2 == "./" name { print tolower($1); exit }' \
+    "${jbr_checksum_file}"
+)"
+[[ "${expected_jbr_sha256}" =~ ^[0-9a-f]{64}$ ]] \
+  || fail "No valid SHA-256 entry for ${JBR_ASSET_NAME} was found in SHA256SUMS"
+actual_jbr_sha256="$(sha256sum "${jbr_archive}" | awk '{print tolower($1)}')"
+[[ "${actual_jbr_sha256}" == "${expected_jbr_sha256}" ]] \
+  || fail "JBR SHA-256 verification failed for ${JBR_ASSET_NAME}"
+echo "JBR SHA-256 verified: ${actual_jbr_sha256}"
+
+tar --extract --gzip --file "${jbr_archive}" --directory "${work_dir}/runtime-unpacked" --no-same-owner
 mapfile -t runtime_java_candidates < <(
   find "${work_dir}/runtime-unpacked" -mindepth 3 -maxdepth 3 -type f -path '*/bin/java' -print
 )
 if [[ ${#runtime_java_candidates[@]} -ne 1 ]]; then
-  fail "Expected one Temurin bin/java after extraction, found ${#runtime_java_candidates[@]}"
+  fail "Expected one JBR bin/java after extraction, found ${#runtime_java_candidates[@]}"
 fi
-temurin_root="$(dirname "$(dirname "${runtime_java_candidates[0]}")")"
+jbr_root="$(dirname "$(dirname "${runtime_java_candidates[0]}")")"
 
 rm -rf "${product_root}/jbr"
-mv "${temurin_root}" "${product_root}/jbr"
+mv "${jbr_root}" "${product_root}/jbr"
 java_executable="${product_root}/${JAVA_PATH}"
 [[ -x "${java_executable}" ]] || fail "Injected Java executable is missing or not executable: ${java_executable}"
 
 runtime_settings="$("${java_executable}" -XshowSettings:properties -version 2>&1)"
-temurin_runtime_version="$(awk -F' = ' '/^[[:space:]]*java\.runtime\.version = / { print $2; exit }' <<< "${runtime_settings}")"
-temurin_vendor="$(awk -F' = ' '/^[[:space:]]*java\.vendor = / { print $2; exit }' <<< "${runtime_settings}")"
-[[ -n "${temurin_runtime_version}" ]] || fail "Unable to read the injected Java runtime version"
-[[ "${temurin_vendor}" == *Adoptium* ]] || fail "Unexpected injected Java vendor: ${temurin_vendor}"
-echo "Injected runtime: ${temurin_vendor} ${temurin_runtime_version}"
+jbr_runtime_version="$(awk -F' = ' '/^[[:space:]]*java\.runtime\.version = / { print $2; exit }' <<< "${runtime_settings}")"
+jbr_vendor="$(awk -F' = ' '/^[[:space:]]*java\.vendor = / { print $2; exit }' <<< "${runtime_settings}")"
+jbr_specification_version="$(awk -F' = ' '/^[[:space:]]*java\.specification\.version = / { print $2; exit }' <<< "${runtime_settings}")"
+[[ -n "${jbr_runtime_version}" ]] || fail "Unable to read the injected JBR runtime version"
+[[ "${jbr_vendor}" == *JetBrains* ]] || fail "Unexpected injected Java vendor: ${jbr_vendor}"
+[[ "${jbr_specification_version}" == "${runtime_feature}" ]] \
+  || fail "Injected JBR Java feature ${jbr_specification_version} does not match expected feature ${runtime_feature}"
+echo "Injected runtime: ${jbr_vendor} ${jbr_runtime_version} from ${JBR_RELEASE_TAG}"
 
 audit_env="${work_dir}/abi-audit.env"
 python3 - "${product_root}" > "${audit_env}" <<'PY'
@@ -410,12 +485,15 @@ cat > "${notes_file}" <<EOF
 - Source snapshot: \`${source_snapshot}\`
 - Source commit: \`${GITHUB_SHA}\`
 - Target: Linux x86_64, CentOS 7 / glibc 2.17
-- Embedded runtime: \`${temurin_vendor} ${temurin_runtime_version}\`
+- Embedded runtime: \`${jbr_vendor} ${jbr_runtime_version}\`
+- JBR release: \`${jbr_release_repository}@${JBR_RELEASE_TAG}\`
+- JBR asset: \`${JBR_ASSET_NAME}\`
+- JBR SHA-256: \`${actual_jbr_sha256}\`
 - ABI audit: \`${ABI_ELF_COUNT}\` Linux x86_64 ELF files, including \`${ABI_EMBEDDED_ELF_COUNT}\` embedded native libraries; highest required glibc \`${ABI_HIGHEST_GLIBC}\`
 
-This is an unofficial compatibility build from the synchronized JetBrains upstream source. The upstream JetBrains Runtime is replaced with an Eclipse Temurin JDK whose Java feature version matches the runtime feature used by the source tree. The workflow verifies the Temurin SHA-256 checksum, audits native binaries for glibc 2.17 compatibility, and runs both Java and the IDE launcher inside a CentOS 7 container before publishing.
+This is an unofficial compatibility build from the synchronized JetBrains upstream source. The upstream bundled runtime is replaced with the newest published (non-draft, including prerelease) CentOS 7 JBR release from ${jbr_release_repository}. The workflow verifies that release's SHA256SUMS, checks that the JBR Java feature matches the source tree runtime feature, audits native binaries for glibc 2.17 compatibility, and runs both Java and the IDE launcher inside a CentOS 7 container before publishing.
 
-Because this package does not use JetBrains Runtime, JBR-specific fixes and JCEF-based embedded browser features may be unavailable. The upstream SBOM is not published because replacing the runtime makes that SBOM inaccurate.
+The upstream SBOM is not published because replacing the runtime makes that SBOM inaccurate.
 EOF
 
 {
@@ -426,6 +504,7 @@ EOF
   echo "prerelease=${IS_PRERELEASE}"
   echo "product_version=${PRODUCT_VERSION}"
   echo "full_build_number=${FULL_BUILD_NUMBER}"
-  echo "runtime_version=${temurin_runtime_version}"
+  echo "runtime_version=${jbr_runtime_version}"
+  echo "jbr_release_tag=${JBR_RELEASE_TAG}"
   echo "highest_glibc=${ABI_HIGHEST_GLIBC}"
 } >> "${output_file}"
