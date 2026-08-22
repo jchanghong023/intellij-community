@@ -18,6 +18,8 @@ jobs:
     env:
       ARTIFACTS_DIR: out/pycharm-ce/artifacts
       JBR_RELEASE_REPOSITORY: jchanghong023/JetBrainsRuntime
+      CENTOS7_LIBSTDCXX_IMAGE: quay.io/pypa/manylinux2014_x86_64:latest
+      CENTOS7_TEST_IMAGE: quay.io/pypa/manylinux2014_x86_64:latest
 
     steps:
       - name: Require the synchronized master branch
