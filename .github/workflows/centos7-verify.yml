@@ -82,7 +82,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          bash .github/scripts/package-and-verify-centos7.sh \
+          bash .github/scripts/package-and-verify-centos7-v2.sh \
             "${ARTIFACTS_DIR}" \
             "${{ steps.versioning.outputs.build_number }}" \
             "${{ steps.versioning.outputs.source_snapshot }}"
