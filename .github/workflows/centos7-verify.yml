@@ -2,11 +2,6 @@ name: CentOS 7 Verify
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
-    paths:
-      - .github/workflows/centos7-verify.yml
 
 permissions:
   contents: read
