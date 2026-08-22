@@ -57,7 +57,6 @@ jobs:
         with:
           product: pycharm
           swap_size: 30G
-          android_ref: master
           system_properties: >-
             -Dbuild.number=${{ steps.versioning.outputs.build_number }}
             -Dintellij.build.target.os=linux
