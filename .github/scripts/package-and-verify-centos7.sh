@@ -66,7 +66,7 @@ product_code = str(product["productCode"]).strip()
 if product_code != "PC":
     raise SystemExit(f"Expected PyCharm productCode='PC', found {product_code!r}")
 full_build_number = str(product["buildNumber"]).strip()
-expected_full_build_number = f"PC-{expected_build_number}"
+expected_full_build_number = expected_build_number
 if full_build_number != expected_full_build_number:
     raise SystemExit(
         f"product-info.json contains buildNumber={full_build_number!r}; "
