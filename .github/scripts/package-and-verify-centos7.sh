@@ -83,16 +83,16 @@ if str(product_root) in ("", "."):
 linux_launches = [
     item
     for item in product.get("launch", [])
-    if item.get("os") == "linux" and item.get("arch") in (None, "x64")
+    if str(item.get("os") or "").lower() == "linux"
+    and str(item.get("arch") or "").lower() in ("", "x64", "amd64", "x86_64")
 ]
 if not linux_launches:
-    raise SystemExit("No Linux x64 launch entry was found in product-info.json")
+    raise SystemExit("No Linux x86_64 launch entry was found in product-info.json")
 
 preferred = [
     item
     for item in linux_launches
-    if str(item.get("launcherPath") or "").endswith("/pycharm")
-    or str(item.get("launcherPath") or "") == "bin/pycharm"
+    if PurePosixPath(str(item.get("launcherPath") or "")).name in ("pycharm", "pycharm.sh")
 ]
 launch = preferred[0] if preferred else linux_launches[0]
 launcher_path = str(launch["launcherPath"])
