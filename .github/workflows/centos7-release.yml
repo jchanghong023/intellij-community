@@ -12,11 +12,11 @@ concurrency:
 
 jobs:
   build-verify-and-release:
-    name: Build, verify and publish Linux x64 for CentOS 7
+    name: Build, verify and publish PyCharm Linux x64 for CentOS 7
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      ARTIFACTS_DIR: out/idea-ce/artifacts
+      ARTIFACTS_DIR: out/pycharm-ce/artifacts
       JBR_RELEASE_REPOSITORY: jchanghong023/JetBrainsRuntime
 
     steps:
@@ -52,10 +52,10 @@ jobs:
           echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
           echo "Build number: ${build_number}"
 
-      - name: Build upstream Linux x64 distribution
+      - name: Build upstream PyCharm Linux x64 distribution
         uses: ./.github/actions/build_ide
         with:
-          product: intellij_idea
+          product: pycharm
           swap_size: 30G
           android_ref: master
           system_properties: >-
@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker image rm intellij_idea >/dev/null 2>&1 || true
+          docker image rm pycharm >/dev/null 2>&1 || true
           docker builder prune --all --force >/dev/null 2>&1 || true
           df -h
 
