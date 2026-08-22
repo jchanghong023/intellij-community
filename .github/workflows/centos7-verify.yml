@@ -2,16 +2,13 @@ name: CentOS 7 Verify
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - master
 
 permissions:
   contents: read
 
 concurrency:
   group: centos7-verify-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-verify:
