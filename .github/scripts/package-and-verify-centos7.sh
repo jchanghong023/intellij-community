@@ -13,7 +13,7 @@ output_file="${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
 runner_temp="${RUNNER_TEMP:-/tmp}"
 run_id="${GITHUB_RUN_ID:-local}"
 run_attempt="${GITHUB_RUN_ATTEMPT:-1}"
-work_dir="${runner_temp}/idea-centos7-${run_id}-${run_attempt}"
+work_dir="${runner_temp}/pycharm-centos7-${run_id}-${run_attempt}"
 jbr_release_repository="${JBR_RELEASE_REPOSITORY:-jchanghong023/JetBrainsRuntime}"
 
 fail() {
@@ -32,7 +32,7 @@ done
 [[ "${jbr_release_repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
   || fail "Invalid JBR release repository: ${jbr_release_repository}"
 
-original_artifact="${artifacts_dir}/ideaIC-${expected_build_number}.tar.gz"
+original_artifact="${artifacts_dir}/pycharmPC-${expected_build_number}.tar.gz"
 if [[ ! -f "${original_artifact}" ]]; then
   echo "Expected Linux artifact was not produced: ${original_artifact}" >&2
   find "${artifacts_dir}" -maxdepth 1 -type f -printf '%f\n' | sort >&2 || true
@@ -63,8 +63,10 @@ with open(product_info_path, encoding="utf-8") as stream:
 version = str(product["version"]).strip()
 version_suffix = str(product.get("versionSuffix") or "").strip()
 product_code = str(product["productCode"]).strip()
+if product_code != "PC":
+    raise SystemExit(f"Expected PyCharm productCode='PC', found {product_code!r}")
 full_build_number = str(product["buildNumber"]).strip()
-expected_full_build_number = f"{product_code}-{expected_build_number}"
+expected_full_build_number = f"PC-{expected_build_number}"
 if full_build_number != expected_full_build_number:
     raise SystemExit(
         f"product-info.json contains buildNumber={full_build_number!r}; "
@@ -89,8 +91,8 @@ if not linux_launches:
 preferred = [
     item
     for item in linux_launches
-    if str(item.get("launcherPath") or "").endswith("/idea")
-    or str(item.get("launcherPath") or "") == "bin/idea"
+    if str(item.get("launcherPath") or "").endswith("/pycharm")
+    or str(item.get("launcherPath") or "") == "bin/pycharm"
 ]
 launch = preferred[0] if preferred else linux_launches[0]
 launcher_path = str(launch["launcherPath"])
@@ -138,7 +140,7 @@ product_root="${work_dir}/extracted/${PRODUCT_ROOT_RELATIVE}"
 [[ -d "${product_root}" ]] || fail "Unable to determine extracted product root: ${product_root}"
 
 launcher_executable="${product_root}/${LAUNCHER_PATH}"
-[[ -x "${launcher_executable}" ]] || fail "IDE launcher is missing or not executable: ${launcher_executable}"
+[[ -x "${launcher_executable}" ]] || fail "PyCharm launcher is missing or not executable: ${launcher_executable}"
 
 runtime_build="$({ awk -F= '$1 == "runtimeBuild" { print $2; exit }' build/dependencies/dependencies.properties || true; })"
 if [[ ! "${runtime_build}" =~ ^([0-9]+)(\..*)?$ ]]; then
@@ -210,7 +212,7 @@ asset_feature = asset_version.split(".", 1)[0]
 if asset_feature != expected_feature:
     raise SystemExit(
         f"Latest JBR release provides Java feature {asset_feature}, "
-        f"but the IntelliJ source tree expects feature {expected_feature}"
+        f"but the PyCharm source tree expects feature {expected_feature}"
     )
 
 checksum_assets = [asset for asset in assets if asset.get("name") == "SHA256SUMS"]
@@ -430,10 +432,10 @@ centos_image="quay.io/centos/centos:7"
 docker pull "${centos_image}"
 docker run --rm \
   --platform linux/amd64 \
-  --volume "${product_root}:/opt/idea:ro" \
-  --env "IDEA_LAUNCHER=/opt/idea/${LAUNCHER_PATH}" \
-  --env "IDEA_JAVA=/opt/idea/${JAVA_PATH}" \
-  --env "HOME=/tmp/idea-home" \
+  --volume "${product_root}:/opt/pycharm:ro" \
+  --env "PYCHARM_LAUNCHER=/opt/pycharm/${LAUNCHER_PATH}" \
+  --env "PYCHARM_JAVA=/opt/pycharm/${JAVA_PATH}" \
+  --env "HOME=/tmp/pycharm-home" \
   "${centos_image}" \
   /bin/bash -lc '
     set -euo pipefail
@@ -443,11 +445,11 @@ docker run --rm \
       echo "Unexpected container libc: ${libc_version}" >&2
       exit 1
     fi
-    "${IDEA_JAVA}" -version
-    timeout 120 "${IDEA_LAUNCHER}" --version
+    "${PYCHARM_JAVA}" -version
+    timeout 120 "${PYCHARM_LAUNCHER}" --version
   '
 
-release_artifact="${artifacts_dir}/idea-centos7-${RELEASE_TAG}-linux-x64.tar.gz"
+release_artifact="${artifacts_dir}/pycharm-centos7-${RELEASE_TAG}-linux-x64.tar.gz"
 release_checksum="${release_artifact}.sha256"
 rm -f "${release_artifact}" "${release_checksum}"
 
@@ -478,7 +480,7 @@ tar -tzf "${release_artifact}" | grep -Fqx "${PRODUCT_ROOT_RELATIVE}/${JAVA_PATH
 
 notes_file="${work_dir}/release-notes.md"
 cat > "${notes_file}" <<EOF
-# IntelliJ IDEA Open Source for CentOS 7
+# PyCharm Open Source for CentOS 7
 
 - Product version: \`${PRODUCT_VERSION}${VERSION_SUFFIX:+ ${VERSION_SUFFIX}}\`
 - Build number: \`${FULL_BUILD_NUMBER}\`
@@ -491,7 +493,7 @@ cat > "${notes_file}" <<EOF
 - JBR SHA-256: \`${actual_jbr_sha256}\`
 - ABI audit: \`${ABI_ELF_COUNT}\` Linux x86_64 ELF files, including \`${ABI_EMBEDDED_ELF_COUNT}\` embedded native libraries; highest required glibc \`${ABI_HIGHEST_GLIBC}\`
 
-This is an unofficial compatibility build from the synchronized JetBrains upstream source. The upstream bundled runtime is replaced with the newest published (non-draft, including prerelease) CentOS 7 JBR release from ${jbr_release_repository}. The workflow verifies that release's SHA256SUMS, checks that the JBR Java feature matches the source tree runtime feature, audits native binaries for glibc 2.17 compatibility, and runs both Java and the IDE launcher inside a CentOS 7 container before publishing.
+This is an unofficial PyCharm compatibility build from the synchronized JetBrains upstream source. The upstream bundled runtime is replaced with the newest published (non-draft, including prerelease) CentOS 7 JBR release from ${jbr_release_repository}. The workflow verifies that release's SHA256SUMS, checks that the JBR Java feature matches the source tree runtime feature, audits native binaries for glibc 2.17 compatibility, and runs both Java and the PyCharm launcher inside a CentOS 7 container before publishing.
 
 The upstream SBOM is not published because replacing the runtime makes that SBOM inaccurate.
 EOF
