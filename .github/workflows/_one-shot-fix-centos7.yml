@@ -53,3 +53,5 @@ jobs:
           git add .github/scripts/package-and-verify-centos7-v2.sh
           git commit -m "ci: fix manylinux ABI probe under pipefail"
           git push origin HEAD:master
+
+# one-shot trigger
