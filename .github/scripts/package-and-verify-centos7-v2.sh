@@ -386,8 +386,6 @@ if [[ "${jbr_runtime_numeric}" != "${runtime_base_version}" \
 fi
 echo "Injected runtime: ${jbr_vendor} ${jbr_runtime_version} from ${JBR_RELEASE_TAG}"
 
-# Keep the official product-info launcher path, but replace the downloaded native
-# launcher with the generated shell launcher so startup itself requires no newer glibc.
 compat_lib_dir="${product_root}/lib/centos7"
 mkdir -p "${compat_lib_dir}"
 
@@ -403,8 +401,10 @@ docker run --rm \
     libgcc="$(gcc -print-file-name=libgcc_s.so.1)"
     [[ -f "${stdcpp}" ]] || { echo "Unable to locate libstdc++.so.6" >&2; exit 1; }
     [[ -f "${libgcc}" ]] || { echo "Unable to locate libgcc_s.so.1" >&2; exit 1; }
-    readelf --version-info --wide "${stdcpp}" | grep -Fq "Name: GLIBCXX_3.4.22"
-    readelf --version-info --wide "${stdcpp}" | grep -Fq "Name: CXXABI_1.3.9"
+    echo "Using libstdc++: ${stdcpp}"
+    echo "Using libgcc: ${libgcc}"
+    readelf --version-info --wide "${stdcpp}" | grep -F "Name: GLIBCXX_3.4.22" >/dev/null
+    readelf --version-info --wide "${stdcpp}" | grep -F "Name: CXXABI_1.3.9" >/dev/null
     cp -L "${stdcpp}" /out/libstdc++.so.6
     cp -L "${libgcc}" /out/libgcc_s.so.1
   '
@@ -442,8 +442,6 @@ SH
 chmod 0755 "${native_launcher}"
 echo "Replaced incompatible native launcher with CentOS 7 shell launcher"
 
-# GLIBC stays fixed at 2.17. GLIBCXX/CXXABI may be provided by the bundled private
-# libstdc++, so derive those maxima from that provider and audit every x86_64 ELF.
 audit_env="${work_dir}/abi-audit.env"
 python3 - \
   "${product_root}" \
