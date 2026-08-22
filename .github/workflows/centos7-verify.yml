@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 360
     env:
       ARTIFACTS_DIR: out/idea-ce/artifacts
+      JBR_RELEASE_REPOSITORY: jchanghong023/JetBrainsRuntime
 
     steps:
       - name: Checkout sources
@@ -70,6 +71,8 @@ jobs:
 
       - name: Package and verify CentOS 7 compatibility
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash .github/scripts/package-and-verify-centos7.sh \
             "${ARTIFACTS_DIR}" \
